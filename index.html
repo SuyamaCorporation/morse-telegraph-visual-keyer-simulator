@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>モールス電信キーヤーシミュレーター</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 text-white min-h-screen flex flex-col items-center p-4">
+<h1 class="text-2xl font-bold mb-1 text-center">📡 モールス電信キーヤー</h1>
+<p class="text-gray-400 text-sm mb-4 text-center">スペースキーまたはボタンを押してモールス符号を入力</p>
+
+<div id="lamp" class="w-20 h-20 rounded-full bg-gray-700 border-4 border-gray-600 mx-auto mb-4 shadow-inner transition-colors duration-50 flex items-center justify-center text-2xl">💡</div>
+
+<div class="mb-4 text-center">
+  <button id="keyBtn" class="bg-yellow-600 hover:bg-yellow-500 active:bg-yellow-300 px-10 py-4 rounded-xl font-bold text-lg select-none transition" style="touch-action:none">🔑 キー</button>
+</div>
+
+<div class="bg-gray-800 rounded-xl p-3 w-full max-w-lg mb-4">
+  <div class="text-xs text-gray-400 mb-1">入力中の符号</div>
+  <div id="currentSymbol" class="font-mono text-2xl text-yellow-400 min-h-8 tracking-widest">_</div>
+  <div class="text-xs text-gray-400 mb-1 mt-2">デコード結果</div>
+  <div id="decoded" class="font-mono text-xl text-green-400 min-h-8 break-all"></div>
+</div>
+
+<div class="flex gap-3 mb-4">
+  <label class="text-xs text-gray-300 flex flex-col items-center">
+    WPM（速度）
+    <input type="range" id="wpm" min="5" max="30" value="13" class="w-28 mt-1">
+    <span id="wpmVal">13</span>
+  </label>
+  <label class="text-xs text-gray-300 flex flex-col items-center">
+    モード
+    <select id="mode" class="mt-1 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm">
+      <option value="send">送信練習</option>
+      <option value="free">自由入力</option>
+    </select>
+  </label>
+</div>
+
+<button id="clearBtn" class="bg-gray-700 hover:bg-gray-600 px-5 py-2 rounded text-sm transition mb-4">クリア</button>
+
+<div class="text-xs text-gray-600 text-center">
+  短点(·): 短く / 長点(−): 長く（1単位≒短点）/ 文字間: 3単位放す / 単語間: 7単位
+</div>
+
+<script>
+const MORSE={
+  '.-':'A','-.-.':'C','-..':'D','.':'E','..-.':'F','--.':'G','....':'H','..':'I','.---':'J',
+  '-.-':'K','.-..':'L','--':'M','-.':'N','---':'O','.--.':'P','--.-':'Q','.-.':'R',
+  '...':'S','-':'T','..-':'U','...-':'V','.--':'W','-..-':'X','-.--':'Y','--..':'Z',
+  '.----':'1','..---':'2','...--':'3','....-':'4','.....':'5','-....':'6','--...':'7',
+  '---..':'8','----.':'9','-----':'0','--..--':',','.-.-.-':'.','..--..':'?',
+  '...---...':'SOS'
+};
+
+let keyDown=false,keyDownTime=0,lastKeyUp=0,currentSymbol='',decoded='';
+const lamp=document.getElementById('lamp');
+const ctx2=new AudioContext();
+
+function getUnit(){
+  const wpm=parseInt(document.getElementById('wpm').value);
+  return 1200/wpm;
+}
+
+function beep(freq=700,dur=100){
+  const osc=ctx2.createOscillator();
+  const gain=ctx2.createGain();
+  osc.connect(gain); gain.connect(ctx2.destination);
+  osc.frequency.value=freq;
+  gain.gain.setValueAtTime(0.3,ctx2.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001,ctx2.currentTime+dur/1000);
+  osc.start(); osc.stop(ctx2.currentTime+dur/1000);
+}
+
+function lightOn(){
+  lamp.className='w-20 h-20 rounded-full bg-yellow-400 border-4 border-yellow-300 mx-auto mb-4 shadow-inner transition-colors duration-50 flex items-center justify-center text-2xl';
+}
+function lightOff(){
+  lamp.className='w-20 h-20 rounded-full bg-gray-700 border-4 border-gray-600 mx-auto mb-4 shadow-inner transition-colors duration-50 flex items-center justify-center text-2xl';
+}
+
+function pressKey(){
+  if(keyDown) return;
+  keyDown=true;
+  keyDownTime=Date.now();
+  lightOn();
+  if(ctx2.state==='suspended') ctx2.resume();
+  beep(700,50);
+  charCheckCancel();
+  wordCheckCancel();
+}
+
+function releaseKey(){
+  if(!keyDown) return;
+  keyDown=false;
+  const dur=Date.now()-keyDownTime;
+  const unit=getUnit();
+  const sym=dur<unit*2?'.':'-';
+  currentSymbol+=sym;
+  document.getElementById('currentSymbol').textContent=currentSymbol||'_';
+  lastKeyUp=Date.now();
+  lightOff();
+  scheduleCharCheck();
+}
+
+let charTimer,wordTimer;
+function charCheckCancel(){ clearTimeout(charTimer); }
+function wordCheckCancel(){ clearTimeout(wordTimer); }
+
+function scheduleCharCheck(){
+  charCheckCancel(); wordCheckCancel();
+  const unit=getUnit();
+  charTimer=setTimeout(()=>{
+    if(currentSymbol){
+      const ch=MORSE[currentSymbol];
+      if(ch) decoded+=ch;
+      else decoded+='?';
+      currentSymbol='';
+      document.getElementById('currentSymbol').textContent='_';
+      document.getElementById('decoded').textContent=decoded;
+    }
+    wordTimer=setTimeout(()=>{
+      if(decoded.slice(-1)!==' ') decoded+=' ';
+      document.getElementById('decoded').textContent=decoded;
+    }, unit*4);
+  }, unit*2.5);
+}
+
+document.addEventListener('keydown',e=>{if(e.code==='Space'&&!e.repeat){e.preventDefault();pressKey();}});
+document.addEventListener('keyup',e=>{if(e.code==='Space'){releaseKey();}});
+
+const btn=document.getElementById('keyBtn');
+btn.addEventListener('mousedown',pressKey);
+btn.addEventListener('mouseup',releaseKey);
+btn.addEventListener('touchstart',e=>{e.preventDefault();pressKey();});
+btn.addEventListener('touchend',e=>{e.preventDefault();releaseKey();});
+
+document.getElementById('clearBtn').addEventListener('click',()=>{
+  decoded=''; currentSymbol='';
+  document.getElementById('decoded').textContent='';
+  document.getElementById('currentSymbol').textContent='_';
+});
+document.getElementById('wpm').addEventListener('input',e=>{
+  document.getElementById('wpmVal').textContent=e.target.value;
+});
+</script>
+</body>
+</html>
